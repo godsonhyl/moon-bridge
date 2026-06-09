@@ -420,6 +420,7 @@ type streamConverterState struct {
 	blockTypes      map[int]string            // content index → block type
 	blockSignatures map[int]string            // content index → reasoning signature (from signature_delta)
 	finalUsage      *format.CoreUsage         // tracked from message_delta, passed to message_stop
+	seenCompletion  bool                      // whether CoreEventCompleted has been emitted
 	adapter         *AnthropicProviderAdapter // for buffering raw stream events (trace)
 	suppressText    map[int]bool              // text indices to suppress (server-side search status, etc.)
 }
@@ -462,7 +463,18 @@ func (a *AnthropicProviderAdapter) ToCoreStream(ctx context.Context, src any) (<
 			ev, err := stream.Next()
 			if err != nil {
 				if err == io.EOF {
-					// Stream ended normally.
+					// Stream ended — emit completion if message_stop was not received.
+					// This ensures the client always gets a response.completed event,
+					// even when the upstream skips message_stop (e.g. interrupted
+					// connections or non-standard Anthropic-compatible APIs).
+					if !state.seenCompletion {
+						state.emit(events, format.CoreStreamEvent{
+							Type:   format.CoreEventCompleted,
+							Usage:  state.finalUsage,
+							Status: "completed",
+							Model:  state.model,
+						})
+					}
 					return
 				}
 				// Context cancellation is clean shutdown, not a failure.
@@ -666,6 +678,7 @@ func (s *streamConverterState) convertEvent(events chan<- format.CoreStreamEvent
 		}
 
 	case "message_stop":
+		s.seenCompletion = true
 		s.emit(events, format.CoreStreamEvent{
 			Type:   format.CoreEventCompleted,
 			Usage:  s.finalUsage,

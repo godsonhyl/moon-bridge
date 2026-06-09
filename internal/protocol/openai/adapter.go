@@ -698,6 +698,16 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 						CachedTokens: event.Usage.CachedInputTokens,
 					},
 				}
+			} else {
+				// Ensure Usage is always populated in the completed event.
+				// Some upstream providers (or interrupted streams) may not
+				// provide usage data. The OpenAI Responses API requires
+				// the usage object with input_tokens/output_tokens present.
+				response.Usage = Usage{
+					InputTokens:  response.Usage.InputTokens,
+					OutputTokens: response.Usage.OutputTokens,
+					TotalTokens:  response.Usage.InputTokens + response.Usage.OutputTokens,
+				}
 			}
 			send(StreamEvent{
 				Event: "response.completed",
